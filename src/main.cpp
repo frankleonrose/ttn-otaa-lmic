@@ -35,22 +35,25 @@
 
 #define _SERIAL(op) if (Serial) { Serial.op; }
 
+void do_send(osjob_t* j);
+
 // This EUI must be in little-endian format, so least-significant-byte
 // first. When copying an EUI from ttnctl output, this means to reverse
 // the bytes. For TTN issued EUIs the last bytes should be 0xD5, 0xB3,
 // 0x70.
-static const u1_t PROGMEM APPEUI[8]={ 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00 };
+// lsb copied from https://staging.thethingsnetwork.org/applications/70B3D57ED00001B0/getting-data
+static const u1_t PROGMEM APPEUI[8]= { 0xB0, 0x01, 0x00, 0xD0, 0x7E, 0xD5, 0xB3, 0x70 };
 void os_getArtEui (u1_t* buf) { memcpy_P(buf, APPEUI, 8);}
 
 // This should also be in little endian format, see above.
-static const u1_t PROGMEM DEVEUI[8]={ 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00 };
+static const u1_t PROGMEM DEVEUI[8]= { 0x78, 0x56, 0x45, 0x23, 0x01, 0xEF, 0xCD, 0xAB };
 void os_getDevEui (u1_t* buf) { memcpy_P(buf, DEVEUI, 8);}
 
 // This key should be in big endian format (or, since it is not really a
 // number but a block of memory, endianness does not really apply). In
 // practice, a key taken from ttnctl can be copied as-is.
 // The key shown here is the semtech default key.
-static const u1_t PROGMEM APPKEY[16] = { 0x2B, 0x7E, 0x15, 0x16, 0x28, 0xAE, 0xD2, 0xA6, 0xAB, 0xF7, 0x15, 0x88, 0x09, 0xCF, 0x4F, 0x3C };
+static const u1_t PROGMEM APPKEY[16] = { 0x4A, 0x7F, 0xF9, 0xF3, 0xC8, 0x53, 0x63, 0xBC, 0x51, 0x70, 0x51, 0x7E, 0x5A, 0x6C, 0x04, 0x5C };
 void os_getDevKey (u1_t* buf) {  memcpy_P(buf, APPKEY, 16);}
 
 static uint8_t mydata[] = "Hello, world!";
@@ -62,11 +65,15 @@ const unsigned TX_INTERVAL = 60;
 
 // Pin mapping
 const lmic_pinmap lmic_pins = {
-    .nss = 6,
-    .rxtx = LMIC_UNUSED_PIN,
-    .rst = 5,
-    .dio = {2, 3, 4},
+  .nss = 19,
+  .rxtx = LMIC_UNUSED_PIN,
+  .rst = 18,
+  .dio = {16, 5, 6}, // Moved dio0 from 17 because of overlapping ExtInt4 (pin6)
 };
+
+unsigned long convertSec(long time) {
+    return (time * US_PER_OSTICK) / 1000;
+}
 
 void onEvent (ev_t ev) {
     _SERIAL(print(os_getTime()));
@@ -148,7 +155,9 @@ void do_send(osjob_t* j){
         _SERIAL(println(F("OP_TXRXPEND, not sending")));
     } else {
         // Prepare upstream data transmission at the next possible time.
-        LMIC_setTxData2(1, mydata, sizeof(mydata)-1, 0);
+        //LMIC_setTxData2(1, mydata, sizeof(mydata)-1, 0);
+        size_t nData = sizeof(mydata)-1;
+        LMIC_setTxData2(1, mydata, nData, 0);
         _SERIAL(println(F("Packet queued")));
     }
     // Next TX is scheduled after TX_COMPLETE event.
@@ -170,6 +179,12 @@ void setup() {
     os_init();
     // Reset the MAC state. Session and pending data transfers will be discarded.
     LMIC_reset();
+
+    // Set data rate and transmit power (note: txpow seems to be ignored by the library)
+    LMIC_setDrTxpow(DR_SF7,14);
+
+    // Select SubBand
+    LMIC_selectSubBand(1); // must align with subband on gateway. Zero origin
 
     // Start job (sending automatically starts OTAA too)
     do_send(&sendjob);
